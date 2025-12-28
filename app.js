@@ -56,6 +56,8 @@ const state = {
   timerId: null,
   // When true, we keep cashout outputs “live” as the global pools change.
   cashoutArmed: false,
+  // Snapshot of user's entry, used for mark-to-market cashout
+  cashoutEntry: null,
   // Settlement snapshot
   settlement: null
 };
@@ -81,6 +83,8 @@ const disagreeOddsEl = document.getElementById("disagreeOdds");
 const cashoutSideSel = document.getElementById("cashoutSide");
 const cashoutStakeInput = document.getElementById("cashoutStake");
 const calcCashoutBtn = document.getElementById("calcCashoutBtn");
+const execCashoutBtn = document.getElementById("execCashoutBtn");
+const cashoutMsgEl = document.getElementById("cashoutMsg");
 
 const cashoutValueEl = document.getElementById("cashoutValue");
 const cashoutPLEl = document.getElementById("cashoutPL");
@@ -96,6 +100,7 @@ const calcFinalBtn = document.getElementById("calcFinalBtn");
 const finalPayoutEl = document.getElementById("finalPayout");
 const finalProfitEl = document.getElementById("finalProfit");
 const finalWinningSideEl = document.getElementById("finalWinningSide");
+const finalMsgEl = document.getElementById("finalMsg");
 
 // -----------------------------
 // Core calculations
@@ -126,28 +131,158 @@ function renderPoolsAndOdds() {
   }
 }
 
-function calcCashout({ side, stake, agreePool, disagreePool }) {
-  // side: "Agree" or "Disagree"
-  // stake: user's initial stake
-  // Formula (live): Cashout = stake × (opposite pool / user side pool) × (1 − 0.03)
-  // Constraint: Never exceed available opposite pool.
+function setMessage(el, text, kind) {
+  // kind: "error" | "success" | undefined
+  el.textContent = text || "";
+  el.classList.remove("error", "success");
+  if (kind) el.classList.add(kind);
+}
 
-  const userSidePool = side === "Agree" ? agreePool : disagreePool;
+function isLiveMatch() {
+  // “LIVE” means: started and currently running, and not ended.
+  return !state.ended && state.running;
+}
+
+function cashoutSideKey(side) {
+  return side === "Agree" ? "AGREE" : "DISAGREE";
+}
+
+function getSidePools(side, agreePool, disagreePool) {
+  const userPool = side === "Agree" ? agreePool : disagreePool;
   const oppositePool = side === "Agree" ? disagreePool : agreePool;
+  return { userPool, oppositePool };
+}
 
-  const ratio = safeDivide(oppositePool, userSidePool);
-  const rawCashout = stake * ratio * (1 - EXIT_FEE);
+function getImpliedOdds(totalPool, sidePool) {
+  // Matches the UI: Estimated odds = Total / Side
+  return safeDivide(totalPool, sidePool);
+}
 
-  // Cap by available opposite pool (cannot withdraw more than exists on the other side).
-  const cappedCashout = clampNumber(rawCashout, 0, oppositePool);
+function applyPools(nextAgreePool, nextDisagreePool) {
+  // Keep pools as non-negative integers.
+  const a = Math.floor(Math.max(0, Number(nextAgreePool) || 0));
+  const b = Math.floor(Math.max(0, Number(nextDisagreePool) || 0));
+  agreePoolInput.value = String(a);
+  disagreePoolInput.value = String(b);
+  renderPoolsAndOdds();
+}
+
+function calculateCashout(userSide, userStake, agreePool, disagreePool) {
+  // EARLY CASHOUT (LIQUIDITY-CAPPED, MARK-TO-MARKET)
+  //
+  // Why this model:
+  // - In a real exchange, you only cash out for a profit if the market price moves in your favor
+  //   *after you entered*, and only if there is liquidity.
+  // - The earlier simplified formula (stake × opposite/userPool) can overpay massively when a side
+  //   has very little money, because it treats high odds as “free cashout value” even without any
+  //   market move or counterparty.
+  //
+  // This implementation:
+  // - Locks an "entry odds" snapshot (Total/Side) when you first calculate
+  // - Computes a mark-to-market reference value:
+  //     referenceValue = stake × (entryOdds / currentOdds)
+  //   So if odds improve (currentOdds goes down), you profit; if odds worsen, you lose.
+  // - Liquidity cap: you still cannot withdraw more than the opposite pool.
+
+  if (!isLiveMatch()) {
+    return { ok: false, reason: "Match must be LIVE (started, not paused, not ended)." };
+  }
+
+  if (!(userStake > 0)) {
+    return { ok: false, reason: "Stake must be greater than 0." };
+  }
+
+  const totalPool = agreePool + disagreePool;
+  const { userPool, oppositePool } = getSidePools(userSide, agreePool, disagreePool);
+
+  // A user cannot have staked more than the total pool on that side.
+  if (userStake > userPool) {
+    return { ok: false, reason: "Stake cannot exceed the available pool on your selected side." };
+  }
+
+  // Need both sides to have liquidity to price the market.
+  if (userPool <= 0 || oppositePool <= 0 || totalPool <= 0) {
+    return { ok: false, reason: "Cashout unavailable (insufficient liquidity)." };
+  }
+
+  const currentOdds = getImpliedOdds(totalPool, userPool);
+  if (currentOdds <= 0) {
+    return { ok: false, reason: "Cashout unavailable (cannot compute odds)." };
+  }
+
+  // Ensure we have an entry snapshot for this side + stake.
+  // We treat the first click on "Calculate Cashout" as the user's entry reference point.
+  if (!state.cashoutEntry) {
+    state.cashoutEntry = {
+      side: userSide,
+      stake: userStake,
+      entryOdds: currentOdds
+    };
+  }
+
+  // If the user changes side or stake, require them to re-calculate to set a new entry snapshot.
+  if (state.cashoutEntry.side !== userSide || state.cashoutEntry.stake !== userStake) {
+    return { ok: false, reason: "Side/stake changed. Click Calculate Cashout again to set a new entry reference." };
+  }
+
+  const entryOdds = state.cashoutEntry.entryOdds;
+  if (!(entryOdds > 0)) {
+    return { ok: false, reason: "Cashout unavailable (missing entry odds)." };
+  }
+
+  // Mark-to-market: profit only if odds moved in your favor.
+  const referenceValue = userStake * safeDivide(entryOdds, currentOdds);
+
+  // Liquidity cap (can't take more than what exists on the opposite side)
+  const maxAvailable = oppositePool;
+  const preFeeExit = Math.min(referenceValue, maxAvailable);
+  const exitPayout = preFeeExit * (1 - EXIT_FEE);
 
   return {
-    userSidePool,
+    ok: true,
+    side: cashoutSideKey(userSide),
+    userPool,
     oppositePool,
-    rawCashout,
-    cashout: cappedCashout,
-    profitLoss: cappedCashout - stake
+    totalPool,
+    entryOdds,
+    currentOdds,
+    referenceValue,
+    maxAvailable,
+    preFeeExit,
+    exitPayout,
+    profitLoss: exitPayout - userStake,
+    feeCharged: preFeeExit * EXIT_FEE
   };
+}
+
+function executeCashout(userSide, userStake) {
+  // EXECUTE CASHOUT (UPDATE POOLS)
+  //
+  // if AGREE: A -= userStake, B -= exitValue
+  // if DISAGREE: B -= userStake, A -= exitValue
+  // require A >= 0 and B >= 0
+
+  const { agreePool, disagreePool } = getPools();
+  const result = calculateCashout(userSide, userStake, agreePool, disagreePool);
+  if (!result.ok) return result;
+
+  let nextA = agreePool;
+  let nextB = disagreePool;
+
+  if (userSide === "Agree") {
+    nextA = agreePool - userStake;
+    nextB = disagreePool - result.exitPayout;
+  } else {
+    nextB = disagreePool - userStake;
+    nextA = agreePool - result.exitPayout;
+  }
+
+  if (nextA < -1e-9 || nextB < -1e-9) {
+    return { ok: false, reason: "Cashout failed: pools would go negative." };
+  }
+
+  applyPools(nextA, nextB);
+  return result;
 }
 
 function renderCashout() {
@@ -155,15 +290,33 @@ function renderCashout() {
   const side = cashoutSideSel.value;
   const stake = safeNumber(cashoutStakeInput.value);
 
-  const result = calcCashout({ side, stake, agreePool, disagreePool });
+  const result = calculateCashout(side, stake, agreePool, disagreePool);
 
-  cashoutValueEl.textContent = fmtMoney(result.cashout);
-  cashoutCapEl.textContent = fmtMoney(result.oppositePool);
+  if (!result.ok) {
+    cashoutValueEl.textContent = "—";
+    cashoutPLEl.textContent = "—";
+    cashoutCapEl.textContent = fmtMoney(side === "Agree" ? disagreePool : agreePool);
+    cashoutPLEl.classList.remove("pl", "good", "bad");
+    setMessage(cashoutMsgEl, result.reason, "error");
+    execCashoutBtn.disabled = true;
+    return;
+  }
 
-  const plText = (Number.isFinite(result.profitLoss)) ? fmtMoney(result.profitLoss) : "—";
+  cashoutValueEl.textContent = fmtMoney(result.exitPayout);
+  cashoutCapEl.textContent = fmtMoney(result.maxAvailable);
+
+  const plText = fmtMoney(result.profitLoss);
   cashoutPLEl.textContent = plText;
   cashoutPLEl.classList.remove("pl", "good", "bad");
   cashoutPLEl.classList.add("pl", result.profitLoss >= 0 ? "good" : "bad");
+
+  setMessage(
+    cashoutMsgEl,
+    `Entry odds: ${result.entryOdds.toFixed(4)} · Current odds: ${result.currentOdds.toFixed(4)} · Reference (pre-fee): ${fmtMoney(result.preFeeExit)} · Fee: ${fmtMoney(result.feeCharged)} · Cap: ${fmtMoney(result.maxAvailable)}`,
+    undefined
+  );
+
+  execCashoutBtn.disabled = false;
 }
 
 function renderMatchState() {
@@ -190,6 +343,7 @@ function renderMatchState() {
   cashoutSideSel.disabled = state.ended;
   cashoutStakeInput.disabled = state.ended;
   calcCashoutBtn.disabled = state.ended;
+  execCashoutBtn.disabled = state.ended || !state.cashoutArmed;
 }
 
 // -----------------------------
@@ -331,6 +485,28 @@ function renderFinalPayout() {
   const stake = safeNumber(finalStakeInput.value);
 
   const { agreePool, disagreePool } = state.settlement.pools;
+  const winningPool = winningSide === "Agree" ? agreePool : disagreePool;
+
+  if (!(stake > 0)) {
+    setMessage(finalMsgEl, "Stake must be greater than 0.", "error");
+    finalPayoutEl.textContent = "—";
+    finalProfitEl.textContent = "—";
+    finalProfitEl.classList.remove("pl", "good", "bad");
+    return;
+  }
+
+  // Prevent unrealistic/invalid stake that exceeds the total winning pool.
+  // If stake <= winningPool, then the theoretical gross payout (before fee) is <= totalPool.
+  if (stake > winningPool) {
+    setMessage(finalMsgEl, "Stake cannot exceed the winning side pool from settlement.", "error");
+    finalPayoutEl.textContent = "—";
+    finalProfitEl.textContent = "—";
+    finalProfitEl.classList.remove("pl", "good", "bad");
+    return;
+  }
+
+  setMessage(finalMsgEl, "", undefined);
+
   const result = calcFinalPayout({ winningSide, stake, agreePool, disagreePool });
 
   finalPayoutEl.textContent = fmtMoney(result.payout);
@@ -364,15 +540,49 @@ disagreePoolInput.addEventListener("input", onPoolInputChange);
 calcCashoutBtn.addEventListener("click", () => {
   if (state.ended) return;
   state.cashoutArmed = true; // enables dynamic updates on pool changes
+  // Set or refresh entry snapshot for the current side+stake.
+  // This prevents "free profit" unless odds actually move after this point.
+  state.cashoutEntry = null;
+  renderCashout();
+});
+
+execCashoutBtn.addEventListener("click", () => {
+  if (state.ended) return;
+
+  const side = cashoutSideSel.value;
+  const stake = safeNumber(cashoutStakeInput.value);
+
+  const result = executeCashout(side, stake);
+  if (!result.ok) {
+    setMessage(cashoutMsgEl, result.reason, "error");
+    execCashoutBtn.disabled = true;
+    return;
+  }
+
+  // After execution, show a simple receipt.
+  setMessage(
+    cashoutMsgEl,
+    `Executed cashout: credited ${fmtMoney(result.exitPayout)} (fee ${fmtMoney(result.feeCharged)}). Pools updated.`,
+    "success"
+  );
+
+  // Keep cashout “armed” so future pool changes continue to refresh the numbers.
+  state.cashoutArmed = true;
   renderCashout();
 });
 
 // If user changes side/stake, we refresh the displayed cashout *only after* they have calculated once.
 cashoutSideSel.addEventListener("change", () => {
+  // Changing side invalidates the entry snapshot.
+  state.cashoutEntry = null;
+  execCashoutBtn.disabled = true;
   if (state.cashoutArmed && !state.ended) renderCashout();
 });
 cashoutStakeInput.addEventListener("input", () => {
   cashoutStakeInput.value = String(Math.floor(safeNumber(cashoutStakeInput.value)));
+  // Changing stake invalidates the entry snapshot.
+  state.cashoutEntry = null;
+  execCashoutBtn.disabled = true;
   if (state.cashoutArmed && !state.ended) renderCashout();
 });
 
@@ -399,10 +609,13 @@ function init() {
   cashoutValueEl.textContent = "—";
   cashoutPLEl.textContent = "—";
   cashoutCapEl.textContent = "—";
+  setMessage(cashoutMsgEl, "", undefined);
+  execCashoutBtn.disabled = true;
 
   finalScoreEl.textContent = "—";
   winningSideEl.textContent = "—";
   settlementJsonEl.value = "";
+  setMessage(finalMsgEl, "", undefined);
 }
 
 init();

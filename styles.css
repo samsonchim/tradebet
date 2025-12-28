@@ -222,3 +222,13 @@ button.danger {
 }
 
 .hide { display: none; }
+
+.msg {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.msg.error { color: var(--warn); }
+.msg.success { color: var(--good); }

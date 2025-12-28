@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Liquidity-Based Crash Simulator</title>
+  <link rel="stylesheet" href="crash.css" />
+  <script src="crash.js" defer></script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Liquidity-Based Crash Simulator</h1>
+      <p class="sub">Browser-only demo/simulation (not real gambling). Shows how liquidity controls crash timing and why early cashouts matter.</p>
+    </div>
+    <div class="topRight">
+      <div class="k">Total liquidity remaining</div>
+      <div class="v" id="liquidityRemaining">—</div>
+    </div>
+  </header>
+
+  <main>
+    <section class="card">
+      <div class="meter">
+        <div class="status" id="gameStatus">Waiting</div>
+        <div class="mult"><span id="multiplier">0.50</span><small>x</small></div>
+        <div class="pill" id="crashBanner" style="display:none;">CRASHED at <strong id="crashAt">—</strong></div>
+      </div>
+
+      <div style="margin-top: 12px;" class="row">
+        <div>
+          <button id="startBtn" type="button">Start</button>
+        </div>
+        <div>
+          <button id="restartBtn" type="button" class="secondary">Restart Game</button>
+        </div>
+      </div>
+
+      <div class="msg" id="countdownMsg" aria-live="polite"></div>
+
+      <p class="hint">
+        Crash rule (very important): crash immediately when <strong>max(stake × playerMultiplier) &gt; liquidity</strong>.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Staking (Live)</h2>
+      <div class="kpi">
+        <div class="box">
+          <div class="t">Total active stake</div>
+          <div class="v" id="activeStake">—</div>
+        </div>
+        <div class="box">
+          <div class="t">Active players</div>
+          <div class="v" id="activeCount">—</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 12px;" class="row">
+        <div>
+          <label for="stakeInput">Stake amount</label>
+          <input id="stakeInput" type="number" min="0" step="1" value="1000" />
+        </div>
+        <div>
+          <button id="addStakeBtn" type="button" disabled>Add Stake</button>
+        </div>
+      </div>
+
+      <div class="msg" id="stakeMsg" aria-live="polite"></div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Active Players</h2>
+      <div style="overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Stake</th>
+              <th>Player multiplier</th>
+              <th>Live payout (stake × player multiplier)</th>
+              <th class="actions">Action</th>
+            </tr>
+          </thead>
+          <tbody id="activeTable"></tbody>
+        </table>
+      </div>
+      <div class="msg" id="activeMsg" aria-live="polite"></div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Cashed-Out Players</h2>
+      <div style="overflow:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Stake</th>
+              <th>Multiplier</th>
+              <th>Final payout</th>
+            </tr>
+          </thead>
+          <tbody id="cashedTable"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+</body>
+</html>

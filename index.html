@@ -94,7 +94,12 @@
         <div>
           <button id="calcCashoutBtn" type="button">Calculate Cashout</button>
         </div>
+        <div>
+          <button id="execCashoutBtn" type="button" class="secondary" disabled>Execute Cashout (updates pools)</button>
+        </div>
       </div>
+
+      <div id="cashoutMsg" class="msg" aria-live="polite"></div>
 
       <p class="hint">
         <strong>Cashout value (live, not guaranteed)</strong> uses: Cashout = stake × (opposite pool / user side pool) × (1 − 0.03).<br />
@@ -156,6 +161,8 @@
             <button id="calcFinalBtn" type="button">Calculate Final Payout</button>
           </div>
         </div>
+
+        <div id="finalMsg" class="msg" aria-live="polite"></div>
 
         <p class="hint">
           <strong>Final payout (after match ends)</strong> uses: Final payout = stake × (1 + opposite pool / winning pool) × (1 − 0.03)
