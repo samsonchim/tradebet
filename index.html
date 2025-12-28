@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simple Betting Exchange Simulator (Arsenal vs Liverpool)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>Simple Betting Exchange Simulator — Arsenal vs Liverpool</h1>
+    <p class="subtitle">
+      Educational, client‑side simulation only. Focuses on correct pool math and clear separation between live cashout and final settlement.
+    </p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Match Setup</h2>
+      <div class="status" style="margin-bottom: 10px;">
+        <span class="pill">Match: <strong>Arsenal vs Liverpool</strong></span>
+        <span class="pill">Minute: <strong id="minute">1</strong> / 90</span>
+        <span class="badge live" id="matchState">Not started</span>
+      </div>
+      <div class="btnrow">
+        <button id="startBtn" type="button">Start</button>
+        <button id="pauseBtn" type="button" class="secondary" disabled>Pause</button>
+        <button id="finishBtn" type="button" class="danger">Finish (manual)</button>
+      </div>
+      <p class="hint">
+        Tip: Use <strong>Finish (manual)</strong> to force settlement for testing.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Pool Input (Global — Not Per User)</h2>
+      <div class="grid grid-2">
+        <div>
+          <label for="agreePool">Agree pool (Liverpool wins)</label>
+          <input id="agreePool" type="number" min="0" step="1" value="100000" />
+        </div>
+        <div>
+          <label for="disagreePool">Disagree pool (Liverpool does NOT win)</label>
+          <input id="disagreePool" type="number" min="0" step="1" value="50000" />
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="kpi">
+        <div class="box">
+          <div class="t">Total pool</div>
+          <div class="v" id="totalPool">—</div>
+        </div>
+        <div class="box">
+          <div class="t">Estimated odds — Agree (Total / Agree)</div>
+          <div class="v" id="agreeOdds">—</div>
+        </div>
+        <div class="box">
+          <div class="t">Estimated odds — Disagree (Total / Disagree)</div>
+          <div class="v" id="disagreeOdds">—</div>
+        </div>
+      </div>
+
+      <p class="hint">
+        Odds are implied from pools and are for simulation only. Division by zero is prevented.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Cashout Simulator (Live Match)</h2>
+      <div class="grid grid-2">
+        <div>
+          <label for="cashoutSide">Select side</label>
+          <select id="cashoutSide">
+            <option value="Agree">Agree</option>
+            <option value="Disagree">Disagree</option>
+          </select>
+        </div>
+        <div>
+          <label for="cashoutStake">User’s initial stake</label>
+          <input id="cashoutStake" type="number" min="0" step="1" value="1000" />
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="row" style="align-items: end;">
+        <div>
+          <label>Exit fee (fixed)</label>
+          <input type="text" value="3%" disabled />
+        </div>
+        <div>
+          <button id="calcCashoutBtn" type="button">Calculate Cashout</button>
+        </div>
+      </div>
+
+      <p class="hint">
+        <strong>Cashout value (live, not guaranteed)</strong> uses: Cashout = stake × (opposite pool / user side pool) × (1 − 0.03).<br />
+        It updates automatically as pools change after you calculate once, and it never exceeds the available opposite pool.
+      </p>
+
+      <div class="divider"></div>
+
+      <div class="kpi">
+        <div class="box">
+          <div class="t">Cashout value (live, not guaranteed)</div>
+          <div class="v" id="cashoutValue">—</div>
+        </div>
+        <div class="box">
+          <div class="t">Profit / Loss</div>
+          <div class="v" id="cashoutPL">—</div>
+        </div>
+        <div class="box">
+          <div class="t">Cap (available opposite pool)</div>
+          <div class="v" id="cashoutCap">—</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card span-2">
+      <h2>Match End / Settlement</h2>
+      <div class="grid grid-2">
+        <div>
+          <div class="pill">Final score: <strong id="finalScore">—</strong></div>
+        </div>
+        <div>
+          <div class="pill">Winning side: <strong id="winningSide">—</strong></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <label for="settlementJson">Final match data (JSON)</label>
+      <textarea id="settlementJson" class="json" readonly spellcheck="false"></textarea>
+
+      <div id="postMatch" class="hide" style="margin-top: 12px;">
+        <div class="divider"></div>
+        <h2>Final Payout Calculator (Post‑Match)</h2>
+        <div class="grid grid-2">
+          <div>
+            <label for="finalStake">Winning side user stake</label>
+            <input id="finalStake" type="number" min="0" step="1" value="1000" />
+          </div>
+          <div>
+            <label>Exit fee (fixed)</label>
+            <input type="text" value="3%" disabled />
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="row" style="align-items: end;">
+          <div>
+            <button id="calcFinalBtn" type="button">Calculate Final Payout</button>
+          </div>
+        </div>
+
+        <p class="hint">
+          <strong>Final payout (after match ends)</strong> uses: Final payout = stake × (1 + opposite pool / winning pool) × (1 − 0.03)
+        </p>
+
+        <div class="divider"></div>
+
+        <div class="kpi">
+          <div class="box">
+            <div class="t">Final payout (after match ends)</div>
+            <div class="v" id="finalPayout">—</div>
+          </div>
+          <div class="box">
+            <div class="t">Net profit</div>
+            <div class="v" id="finalProfit">—</div>
+          </div>
+          <div class="box">
+            <div class="t">Winning side (locked)</div>
+            <div class="v" id="finalWinningSide">—</div>
+          </div>
+        </div>
+      </div>
+
+      <p class="hint">
+        Once the match ends (minute 90 or manual finish), pools are frozen and settlement is generated.
+      </p>
+    </section>
+  </main>
+
+</body>
+</html>
