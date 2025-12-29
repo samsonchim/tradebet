@@ -49,6 +49,7 @@ const crashAtEl = document.getElementById("crashAt");
 
 const startBtn = document.getElementById("startBtn");
 const restartBtn = document.getElementById("restartBtn");
+const resetLiquidityBtn = document.getElementById("resetLiquidityBtn");
 
 const countdownMsgEl = document.getElementById("countdownMsg");
 
@@ -414,6 +415,18 @@ function renderAll() {
 startBtn.addEventListener("click", startCountdown);
 restartBtn.addEventListener("click", restartGame);
 addStakeBtn.addEventListener("click", addStake);
+resetLiquidityBtn.addEventListener("click", () => {
+  state.liquidity = 0;
+  state.reserve = 0;
+  setMsg(countdownMsgEl, "Liquidity reset to ₦0.", "success");
+
+  if (state.phase === "flying" && shouldCrashNow()) {
+    crash();
+    return;
+  }
+
+  renderAll();
+});
 stakeInput.addEventListener("input", () => {
   stakeInput.value = String(Math.floor(safeNumber(stakeInput.value)));
 });

@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Simple Betting Exchange Simulator (Arsenal vs Liverpool)</title>
+  <title>Betting Exchange Simulator — Who Will Score First? (Arsenal vs Liverpool)</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="app.js" defer></script>
 </head>
 <body>
   <header>
-    <h1>Simple Betting Exchange Simulator — Arsenal vs Liverpool</h1>
+    <h1>Betting Exchange Simulator — Who Will Score First? (Arsenal vs Liverpool)</h1>
     <p class="subtitle">
-      Educational, client‑side simulation only. Focuses on correct pool math and clear separation between live cashout and final settlement.
+      Educational, client‑side simulation only. Uses global pools and post‑match settlement (no cashout).
     </p>
   </header>
 
@@ -37,12 +37,12 @@
       <h2>Pool Input (Global — Not Per User)</h2>
       <div class="grid grid-2">
         <div>
-          <label for="agreePool">Agree pool (Liverpool wins)</label>
-          <input id="agreePool" type="number" min="0" step="1" value="100000" />
+          <label for="arsenalPool">Arsenal scores first pool</label>
+          <input id="arsenalPool" type="number" min="0" step="1" value="100000" />
         </div>
         <div>
-          <label for="disagreePool">Disagree pool (Liverpool does NOT win)</label>
-          <input id="disagreePool" type="number" min="0" step="1" value="50000" />
+          <label for="liverpoolPool">Liverpool scores first pool</label>
+          <input id="liverpoolPool" type="number" min="0" step="1" value="50000" />
         </div>
       </div>
 
@@ -54,74 +54,18 @@
           <div class="v" id="totalPool">—</div>
         </div>
         <div class="box">
-          <div class="t">Estimated odds — Agree (Total / Agree)</div>
-          <div class="v" id="agreeOdds">—</div>
+          <div class="t">Estimated odds — Arsenal (Total / Arsenal)</div>
+          <div class="v" id="arsenalOdds">—</div>
         </div>
         <div class="box">
-          <div class="t">Estimated odds — Disagree (Total / Disagree)</div>
-          <div class="v" id="disagreeOdds">—</div>
+          <div class="t">Estimated odds — Liverpool (Total / Liverpool)</div>
+          <div class="v" id="liverpoolOdds">—</div>
         </div>
       </div>
 
       <p class="hint">
         Odds are implied from pools and are for simulation only. Division by zero is prevented.
       </p>
-    </section>
-
-    <section class="card">
-      <h2>Cashout Simulator (Live Match)</h2>
-      <div class="grid grid-2">
-        <div>
-          <label for="cashoutSide">Select side</label>
-          <select id="cashoutSide">
-            <option value="Agree">Agree</option>
-            <option value="Disagree">Disagree</option>
-          </select>
-        </div>
-        <div>
-          <label for="cashoutStake">User’s initial stake</label>
-          <input id="cashoutStake" type="number" min="0" step="1" value="1000" />
-        </div>
-      </div>
-
-      <div class="divider"></div>
-
-      <div class="row" style="align-items: end;">
-        <div>
-          <label>Exit fee (fixed)</label>
-          <input type="text" value="3%" disabled />
-        </div>
-        <div>
-          <button id="calcCashoutBtn" type="button">Calculate Cashout</button>
-        </div>
-        <div>
-          <button id="execCashoutBtn" type="button" class="secondary" disabled>Execute Cashout (updates pools)</button>
-        </div>
-      </div>
-
-      <div id="cashoutMsg" class="msg" aria-live="polite"></div>
-
-      <p class="hint">
-        <strong>Cashout value (live, not guaranteed)</strong> uses: Cashout = stake × (opposite pool / user side pool) × (1 − 0.03).<br />
-        It updates automatically as pools change after you calculate once, and it never exceeds the available opposite pool.
-      </p>
-
-      <div class="divider"></div>
-
-      <div class="kpi">
-        <div class="box">
-          <div class="t">Cashout value (live, not guaranteed)</div>
-          <div class="v" id="cashoutValue">—</div>
-        </div>
-        <div class="box">
-          <div class="t">Profit / Loss</div>
-          <div class="v" id="cashoutPL">—</div>
-        </div>
-        <div class="box">
-          <div class="t">Cap (available opposite pool)</div>
-          <div class="v" id="cashoutCap">—</div>
-        </div>
-      </div>
     </section>
 
     <section class="card span-2">
@@ -131,7 +75,7 @@
           <div class="pill">Final score: <strong id="finalScore">—</strong></div>
         </div>
         <div>
-          <div class="pill">Winning side: <strong id="winningSide">—</strong></div>
+          <div class="pill">First scorer: <strong id="winningSide">—</strong></div>
         </div>
       </div>
 
