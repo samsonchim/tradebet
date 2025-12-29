@@ -2,7 +2,7 @@
 // Match: Arsenal vs Liverpool
 // Notes:
 // - All pool inputs are GLOBAL totals (not per user)
-// - Live cashout and final settlement are intentionally separated
+// - Post-match payout can be "withdrawn" to watch pools reduce
 
 // -----------------------------
 // Utilities
@@ -55,7 +55,9 @@ const state = {
   ended: false,
   timerId: null,
   // Settlement snapshot
-  settlement: null
+  settlement: null,
+  // Stores the last computed final payout so we can execute a withdraw step.
+  lastFinalCalc: null
 };
 
 // -----------------------------
@@ -83,6 +85,7 @@ const settlementJsonEl = document.getElementById("settlementJson");
 const postMatchWrap = document.getElementById("postMatch");
 const finalStakeInput = document.getElementById("finalStake");
 const calcFinalBtn = document.getElementById("calcFinalBtn");
+const withdrawFinalBtn = document.getElementById("withdrawFinalBtn");
 const finalPayoutEl = document.getElementById("finalPayout");
 const finalProfitEl = document.getElementById("finalProfit");
 const finalWinningSideEl = document.getElementById("finalWinningSide");
@@ -100,13 +103,18 @@ function getPools() {
 }
 
 function renderPoolsAndOdds() {
+  // Always show current pool totals (so withdrawals visibly reduce liquidity)
   const { arsenalPool, liverpoolPool, totalPool } = getPools();
-
   totalPoolEl.textContent = fmtMoney(totalPool);
 
-  // Live implied odds (estimated)
-  const arsenalOdds = safeDivide(totalPool, arsenalPool);
-  const liverpoolOdds = safeDivide(totalPool, liverpoolPool);
+  // After match ends, odds should be fixed (locked to settlement snapshot),
+  // even if pools are being reduced by withdrawals.
+  const oddsSource = (state.ended && state.settlement)
+    ? state.settlement.pools
+    : { arsenalPool, liverpoolPool, totalPool };
+
+  const arsenalOdds = safeDivide(oddsSource.totalPool, oddsSource.arsenalPool);
+  const liverpoolOdds = safeDivide(oddsSource.totalPool, oddsSource.liverpoolPool);
 
   arsenalOddsEl.textContent = fmtOdds(arsenalOdds);
   liverpoolOddsEl.textContent = fmtOdds(liverpoolOdds);
@@ -138,6 +146,79 @@ function renderMatchState() {
   startBtn.disabled = state.ended;
   pauseBtn.disabled = state.ended || !state.running;
   finishBtn.disabled = state.ended;
+
+  // Final withdraw is only available after settlement AND after a successful calculation.
+  if (withdrawFinalBtn) {
+    withdrawFinalBtn.disabled = !state.ended || !state.lastFinalCalc || !state.lastFinalCalc.ok;
+  }
+}
+
+function applyPools(nextArsenalPool, nextLiverpoolPool) {
+  const a = Math.floor(Math.max(0, Number(nextArsenalPool) || 0));
+  const b = Math.floor(Math.max(0, Number(nextLiverpoolPool) || 0));
+  arsenalPoolInput.value = String(a);
+  liverpoolPoolInput.value = String(b);
+  renderPoolsAndOdds();
+}
+
+function withdrawFinalPayout() {
+  if (!state.ended || !state.settlement) return { ok: false, reason: "Match must be ended to withdraw." };
+  if (!state.lastFinalCalc || !state.lastFinalCalc.ok) return { ok: false, reason: "Calculate final payout first." };
+
+  const { payout, stake, winningSide } = state.lastFinalCalc;
+  if (winningSide === "No goal") {
+    return { ok: false, reason: "No goal (0–0). Market void: no winner withdrawal is applied." };
+  }
+
+  // Current pools (these will be reduced as withdrawals happen)
+  const { arsenalPool, liverpoolPool } = getPools();
+  const currentWinningPool = winningSide === "Arsenal" ? arsenalPool : liverpoolPool;
+  const currentLosingPool = winningSide === "Arsenal" ? liverpoolPool : arsenalPool;
+
+  // Withdrawal rules (as requested):
+  // - Total pool reduces by payout.
+  // - Winning side pool reduces by the user's stake.
+  // - Losing side pool reduces by (payout - stake) i.e. the profit part.
+  // - If winning side pool hits 0, no more withdrawals.
+  if (!(currentWinningPool > 0)) {
+    return { ok: false, reason: "Winning side pool is ₦0. No more winner withdrawals remain." };
+  }
+  if (stake > currentWinningPool) {
+    return { ok: false, reason: "Stake cannot exceed the remaining winning side pool." };
+  }
+
+  const profitPart = payout - stake;
+  if (profitPart > currentLosingPool + 1e-9) {
+    return { ok: false, reason: "Insufficient losing pool to pay the profit part of this withdrawal." };
+  }
+
+  let nextArsenal = arsenalPool;
+  let nextLiverpool = liverpoolPool;
+  if (winningSide === "Arsenal") {
+    nextArsenal = arsenalPool - stake;
+    nextLiverpool = liverpoolPool - profitPart;
+  } else {
+    nextLiverpool = liverpoolPool - stake;
+    nextArsenal = arsenalPool - profitPart;
+  }
+
+  if (nextArsenal < -1e-9 || nextLiverpool < -1e-9) {
+    return { ok: false, reason: "Withdrawal would make pools negative." };
+  }
+
+  applyPools(nextArsenal, nextLiverpool);
+
+  // Require a new calculation for the next withdrawal (pools changed).
+  state.lastFinalCalc = null;
+  renderMatchState();
+
+  return {
+    ok: true,
+    stake,
+    payout,
+    winningSide,
+    profitPart
+  };
 }
 
 // -----------------------------
@@ -275,6 +356,8 @@ function calcFinalPayout({ winningSide, stake, arsenalPool, liverpoolPool }) {
     return {
       winningPool: 0,
       oppositePool: 0,
+      grossPayout: stake,
+      fee: 0,
       payout: stake,
       netProfit: 0
     };
@@ -284,10 +367,14 @@ function calcFinalPayout({ winningSide, stake, arsenalPool, liverpoolPool }) {
   const oppositePool = winningSide === "Arsenal" ? liverpoolPool : arsenalPool;
 
   const ratio = safeDivide(oppositePool, winningPool);
-  const payout = stake * (1 + ratio) * (1 - EXIT_FEE);
+  const grossPayout = stake * (1 + ratio);
+  const fee = grossPayout * EXIT_FEE;
+  const payout = grossPayout - fee;
   return {
     winningPool,
     oppositePool,
+    grossPayout,
+    fee,
     payout,
     netProfit: payout - stake
   };
@@ -299,39 +386,54 @@ function renderFinalPayout() {
   const winningSide = state.settlement.result.winningSide;
   const stake = safeNumber(finalStakeInput.value);
 
-  const { arsenalPool, liverpoolPool } = state.settlement.pools;
-  const winningPool = winningSide === "Arsenal" ? arsenalPool : liverpoolPool;
+  // Payout odds are fixed at settlement.
+  const { arsenalPool: settleArsenal, liverpoolPool: settleLiverpool } = state.settlement.pools;
+
+  // But available "remaining" stakes come from current pools (after prior withdrawals).
+  const { arsenalPool: currentArsenal, liverpoolPool: currentLiverpool } = getPools();
+  const remainingWinningPool = winningSide === "Arsenal" ? currentArsenal : currentLiverpool;
 
   if (!(stake > 0)) {
     setMessage(finalMsgEl, "Stake must be greater than 0.", "error");
     finalPayoutEl.textContent = "—";
     finalProfitEl.textContent = "—";
     finalProfitEl.classList.remove("pl", "good", "bad");
+    state.lastFinalCalc = null;
+    renderMatchState();
     return;
   }
 
   // For the void market (0–0), payout is refund = stake.
   if (winningSide !== "No goal") {
     // Prevent unrealistic/invalid stake that exceeds the total winning pool.
-    // If stake <= winningPool, then the theoretical gross payout (before fee) is <= totalPool.
-    if (stake > winningPool) {
-      setMessage(finalMsgEl, "Stake cannot exceed the winning side pool from settlement.", "error");
+    if (stake > remainingWinningPool) {
+      setMessage(finalMsgEl, "Stake cannot exceed the remaining winning side pool.", "error");
       finalPayoutEl.textContent = "—";
       finalProfitEl.textContent = "—";
       finalProfitEl.classList.remove("pl", "good", "bad");
+      state.lastFinalCalc = null;
+      renderMatchState();
       return;
     }
   }
 
   setMessage(finalMsgEl, "", undefined);
 
-  const result = calcFinalPayout({ winningSide, stake, arsenalPool, liverpoolPool });
+  const result = calcFinalPayout({ winningSide, stake, arsenalPool: settleArsenal, liverpoolPool: settleLiverpool });
 
   finalPayoutEl.textContent = fmtMoney(result.payout);
   finalProfitEl.textContent = fmtMoney(result.netProfit);
   finalProfitEl.classList.remove("pl", "good", "bad");
   finalProfitEl.classList.add("pl", result.netProfit >= 0 ? "good" : "bad");
   finalWinningSideEl.textContent = winningSide;
+
+  state.lastFinalCalc = {
+    ok: true,
+    winningSide,
+    stake,
+    payout: result.payout
+  };
+  renderMatchState();
 }
 
 // -----------------------------
@@ -360,6 +462,20 @@ calcFinalBtn.addEventListener("click", () => {
   renderFinalPayout();
 });
 
+withdrawFinalBtn.addEventListener("click", () => {
+  const res = withdrawFinalPayout();
+  if (!res.ok) {
+    setMessage(finalMsgEl, res.reason, "error");
+    return;
+  }
+
+  setMessage(
+    finalMsgEl,
+    `Withdrawn ${fmtMoney(res.payout)} for ${res.winningSide}. Winning pool -${fmtMoney(res.stake)} (stake). Losing pool -${fmtMoney(res.profitPart)} (profit). Pools updated.`,
+    "success"
+  );
+});
+
 // -----------------------------
 // Init
 // -----------------------------
@@ -377,6 +493,7 @@ function init() {
   winningSideEl.textContent = "—";
   settlementJsonEl.value = "";
   setMessage(finalMsgEl, "", undefined);
+  state.lastFinalCalc = null;
 }
 
 init();

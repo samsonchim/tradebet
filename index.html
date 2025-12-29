@@ -104,6 +104,9 @@
           <div>
             <button id="calcFinalBtn" type="button">Calculate Final Payout</button>
           </div>
+          <div>
+            <button id="withdrawFinalBtn" type="button" class="secondary" disabled>Withdraw Winner (deduct from pools)</button>
+          </div>
         </div>
 
         <div id="finalMsg" class="msg" aria-live="polite"></div>
@@ -131,7 +134,7 @@
       </div>
 
       <p class="hint">
-        Once the match ends (minute 90 or manual finish), pools are frozen and settlement is generated.
+        Once the match ends (minute 90 or manual finish), settlement is generated. You can then withdraw winners to see pools reduce.
       </p>
     </section>
   </main>
